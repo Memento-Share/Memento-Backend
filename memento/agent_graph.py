@@ -30,14 +30,24 @@ def init_photo_state(photo_bytes: bytes, mime_type: str) -> MementoState:
                 HumanMessage(content = [{"type" : "image", "base64" : b64, "mime_type": mime_type}])]
     return MementoState(messages=messages, request_stage="image")
 
+def init_audio_state(audio_bytes: bytes, mime_type: str, messages: List) -> MementoState:
+    sys_prompt : str = (
+    "You are a warm, patient interviewer helping an elderly person tell stories. "
+    "Given a short audio clip of the person's voice, ask ONE open-ended follow up question to continue the conversation."
+    )
+    b64 = base64.b64encode(audio_bytes).decode("utf-8")
+    new_messages = messages + [SystemMessage(content=sys_prompt), HumanMessage(content = [{"type" : "audio", "base64" : b64, "mime_type": mime_type}])]
+    return MementoState(messages=new_messages, request_stage="audio")
+
 def photo_node(state: MementoState) -> Dict[Literal["messages"], Any]:
     response = gemini.invoke(state["messages"])
     print("Photo node response:", response)
     return {"messages": [response]}
 
 def audio_node(state: MementoState) -> Dict[Literal["messages"], Any]:
-    print("Processing audio...")
-    return {"messages": [AIMessage(content="Processed Audio")]}
+    response = gemini.invoke(state["messages"])
+    print("AUDIO node response:", response)
+    return {"messages": [response]}
 
 def text_node(state: MementoState) -> Dict[Literal["messages"], Any]:
     print("Processing text...")
@@ -61,9 +71,15 @@ graph.add_edge("photo_node", END)
 graph.add_edge("audio_node", "text_node")
 graph.add_edge("text_node", END)
 agent = graph.compile()
+
+def run_agent(state : MementoState):
+    result = agent.invoke(state)
+    return result
+
 def test_graph():
-    test_image = Path("test_media/chest.png").read_bytes()
-    initial_state = init_photo_state(test_image, "image/png")
+    test_audio = Path("test_media/monster.mp3").read_bytes()
+    initial_state = init_audio_state(test_audio, "audio/mpeg", [])
     result = agent.invoke(initial_state)
 
-test_graph()
+if __name__ == "__main__":
+    test_graph()
