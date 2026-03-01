@@ -1,17 +1,44 @@
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langchain.messages import AIMessage, SystemMessage, HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import List, Optional, Literal, Any, Dict, TypedDict
+import dotenv
+import os
+import base64
+from pathlib import Path
+
+
+dotenv.load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+TEXT_MODEL = "gemini-2.5-flash"
+IMAGE_MODEL = "gemini-2.5-flash"
+
+gemini = ChatGoogleGenerativeAI(model=TEXT_MODEL, api_key=GEMINI_API_KEY)
 
 class MementoState(MessagesState):
     request_stage : Literal["image", "audio"]
 
+def init_photo_state(photo_bytes: bytes, mime_type: str) -> MementoState:
+    sys_prompt : str = (
+    "You are a warm, patient interviewer helping an elderly person tell stories. "
+    "Given a photo of a keepsake/heirloom, ask ONE open-ended question to start."
+    )
+    b64 = base64.b64encode(photo_bytes).decode("utf-8")
+    messages = [SystemMessage(content=sys_prompt),
+                HumanMessage(content = [{"type" : "image", "base64" : b64, "mime_type": mime_type}])]
+    return MementoState(messages=messages, request_stage="image")
 
 def photo_node(state: MementoState) -> Dict[Literal["messages"], Any]:
-    print("Processing image...")
-    return {"messages": [AIMessage(content="Processed Image")]}
+    response = gemini.invoke(state["messages"])
+    print("Photo node response:", response)
+    return {"messages": [response]}
+
 def audio_node(state: MementoState) -> Dict[Literal["messages"], Any]:
     print("Processing audio...")
     return {"messages": [AIMessage(content="Processed Audio")]}
+
 def text_node(state: MementoState) -> Dict[Literal["messages"], Any]:
     print("Processing text...")
     return {"messages": [AIMessage(content="Processed Text")]}
@@ -35,8 +62,8 @@ graph.add_edge("audio_node", "text_node")
 graph.add_edge("text_node", END)
 agent = graph.compile()
 def test_graph():
-    state : MementoState = {"messages" : [],"request_stage": "image"}
-    result = agent.invoke(state)
-    print(result)
+    test_image = Path("test_media/chest.png").read_bytes()
+    initial_state = init_photo_state(test_image, "image/png")
+    result = agent.invoke(initial_state)
 
 test_graph()
