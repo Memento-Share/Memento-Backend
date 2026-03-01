@@ -25,8 +25,8 @@ The backend is responsible for:
 - **FastAPI**
 - **Python**
 - **Pydantic**
--**Langchain**
--**Supabase**
+- **Langchain**
+- **Supabase**
 
 ## AI Layer
 - **Gemini Developer API**
