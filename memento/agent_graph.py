@@ -6,19 +6,32 @@ import dotenv
 import os
 import base64
 from pathlib import Path
-
+from google.cloud import texttospeech
+import google
 
 dotenv.load_dotenv()
+
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+TTS_LOCATION = os.getenv("GOOGLE_CLOUD_REGION")
+
+API_ENDPOINT = (
+    f"{TTS_LOCATION}-texttospeech.googleapis.com"
+    if TTS_LOCATION != "global"
+    else "texttospeech.googleapis.com"
+)
+
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 TEXT_MODEL = "gemini-2.5-flash"
 IMAGE_MODEL = "gemini-2.5-flash"
+TTS_MODEL = "gemini-2.5-flash-lite-preview-tts"
 
 gemini = ChatGoogleGenerativeAI(model=TEXT_MODEL, api_key=GEMINI_API_KEY)
 
 class MementoState(MessagesState):
     request_stage : Literal["image", "audio"]
+    voice : bytes | None
 
 def init_photo_state(photo_bytes: bytes, mime_type: str) -> MementoState:
     sys_prompt : str = (
@@ -28,7 +41,7 @@ def init_photo_state(photo_bytes: bytes, mime_type: str) -> MementoState:
     b64 = base64.b64encode(photo_bytes).decode("utf-8")
     messages = [SystemMessage(content=sys_prompt),
                 HumanMessage(content = [{"type" : "image", "base64" : b64, "mime_type": mime_type}])]
-    return MementoState(messages=messages, request_stage="image")
+    return MementoState(messages=messages, request_stage="image", voice=None)
 
 def init_audio_state(audio_bytes: bytes, mime_type: str, messages: List) -> MementoState:
     sys_prompt : str = (
@@ -37,7 +50,7 @@ def init_audio_state(audio_bytes: bytes, mime_type: str, messages: List) -> Meme
     )
     b64 = base64.b64encode(audio_bytes).decode("utf-8")
     new_messages = messages + [SystemMessage(content=sys_prompt), HumanMessage(content = [{"type" : "audio", "base64" : b64, "mime_type": mime_type}])]
-    return MementoState(messages=new_messages, request_stage="audio")
+    return MementoState(messages=new_messages, request_stage="audio", voice=None)
 
 def photo_node(state: MementoState) -> Dict[Literal["messages"], Any]:
     response = gemini.invoke(state["messages"])
@@ -49,9 +62,20 @@ def audio_node(state: MementoState) -> Dict[Literal["messages"], Any]:
     print("AUDIO node response:", response)
     return {"messages": [response]}
 
-def text_node(state: MementoState) -> Dict[Literal["messages"], Any]:
-    print("Processing text...")
-    return {"messages": [AIMessage(content="Processed Text")]}
+def tts_node(state: MementoState) -> MementoState:
+    client = texttospeech.TextToSpeechClient(client_options={"api_endpoint": API_ENDPOINT})
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3
+    )
+    prompt = "You are a warm, patient interviewer helping an elderly person tell stories. Speak in a friendly, conversational tone."
+    ai_response = state["messages"][-1].content
+    synthesis_input = texttospeech.SynthesisInput(text=ai_response)
+    response = client.synthesize_speech(input=synthesis_input, audio_config=audio_config, voice=texttospeech.VoiceSelectionParams(language_code="en-US", model_name = TTS_MODEL, name = "Achernar"))
+    output_filepath = Path("test_media/response.mp3")
+    with open(output_filepath, "wb") as out:
+        out.write(response.audio_content)
+        print(f"Audio content written to file: {output_filepath}")
+    return MementoState(messages=state["messages"], request_stage=state["request_stage"], voice=response.audio_content)
 
 
 def router(state): 
@@ -64,10 +88,11 @@ def router(state):
 graph = StateGraph(MementoState)
 graph.add_node("photo_node", photo_node)
 graph.add_node("audio_node", audio_node)
-
+graph.add_node("tts_node", tts_node)
 graph.add_conditional_edges(START, router)
-graph.add_edge("photo_node", END)
-graph.add_edge("audio_node", END)
+graph.add_edge("photo_node", "tts_node")
+graph.add_edge("audio_node", "tts_node")
+graph.add_edge("tts_node", END)
 agent = graph.compile()
 
 def run_agent(state : MementoState):
