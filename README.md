@@ -5,6 +5,24 @@ The Memento Backend powers the intelligence layer of the Memento app. It handles
 This repository contains the **FastAPI-based backend service and langgraph class** for Memento.
 
 ---
+# Setup instructions
+
+1. Create venv + install deps
+
+cd memento-backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+# or:
+pip install fastapi uvicorn requests pydantic google-genai python-dotenv
+
+2. Set env vars just like frontend repo
+
+3. Run the server
+
+uvicorn backend_api:app --reload --port 8000
+
+NOTE: we haven't disclosed our API key here, but it runs successfully as the judges will see in the demo. 
 
 # Purpose
 
