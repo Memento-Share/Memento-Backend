@@ -68,7 +68,6 @@ graph.add_node("text_node", text_node)
 
 graph.add_conditional_edges(START, router)
 graph.add_edge("photo_node", END)
-graph.add_edge("audio_node", "text_node")
 graph.add_edge("text_node", END)
 agent = graph.compile()
 

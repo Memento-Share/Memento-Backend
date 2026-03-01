@@ -32,7 +32,6 @@ from langchain.messages import AIMessage
 # ---------------------------
 SUPABASE_URL = "https://dspaaqbthcdwtxfflovn.supabase.co"
 SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRzcGFhcWJ0aGNkd3R4ZmZsb3ZuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjMxODY1NCwiZXhwIjoyMDg3ODk0NjU0fQ.Nq3ICA7nvS1C43q1QKzRlMLmOZ8BtOdtOmk0iPh83XA"
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 # Conversation memory (MVP global; replace with per-user/per-convo state later)
 messages: list = []
