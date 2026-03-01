@@ -312,6 +312,7 @@ async def upload_recording(
         "convo_id": convo_id,
         "media_id": media_id,
         "recording_path": object_path,
+        "ai_text": 
         # If recordings bucket is public, frontend can play this directly:
         "recording_url": public_object_url("recordings", object_path),
         "mime": mime,
