@@ -283,6 +283,7 @@ async def upload_recording(
         raise HTTPException(status_code=400, detail="Empty audio upload")
 
     mime = audio.content_type or "application/octet-stream"
+    ai_text = gemini_analyze_audio(audio_bytes, audio_mime=mime)
 
     # preserve extension if provided; default to .m4a
     ext = ".m4a"
@@ -306,13 +307,18 @@ async def upload_recording(
             [ThreadTurn(role="user", text="[voice message recorded]", kind="audio",
                         meta={"recording_path": object_path, "mime": mime})],
         )
+    updated = append_ai_turn(
+        convo_id=convo_id,
+        ai_text=ai_text,
+        kind="audio"
+    )
 
     return {
         "ok": True,
         "convo_id": convo_id,
         "media_id": media_id,
         "recording_path": object_path,
-        "ai_text": 
+        "ai_text": ai_text,
         # If recordings bucket is public, frontend can play this directly:
         "recording_url": public_object_url("recordings", object_path),
         "mime": mime,
@@ -337,19 +343,19 @@ def process_image(req: ProcessImageRequest):
     return ProcessResponse(ok=True, ai_text=ai_text, ai_mime=img_mime, media_url=url, updated_message_row=updated)
 
 
-@app.post("/process/audio", response_model=ProcessResponse)
-def process_audio(req: ProcessAudioRequest):
-    # recording_path should come from /recordings response (and be stored in media.recordings)
-    url = public_object_url("recordings", req.recording_path)
-    audio_bytes, audio_mime = fetch_media(url)
+# @app.post("/process/audio", response_model=ProcessResponse)
+# def process_audio(req: ProcessAudioRequest):
+#     # recording_path should come from /recordings response (and be stored in media.recordings)
+#     url = public_object_url("recordings", req.recording_path)
+#     audio_bytes, audio_mime = fetch_media(url)
 
-    ai_text = gemini_analyze_audio(audio_bytes, audio_mime)
+#     ai_text = gemini_analyze_audio(audio_bytes, audio_mime=audio_mime)
 
-    updated = append_ai_turn(
-        convo_id=req.convo_id,
-        ai_text=ai_text,
-        kind="audio",
-        meta={"recording_url": url, "recording_path": req.recording_path, "mime": audio_mime},
-    )
+#     updated = append_ai_turn(
+#         convo_id=req.convo_id,
+#         ai_text=ai_text,
+#         kind="audio",
+#         meta={"recording_url": url, "recording_path": req.recording_path, "mime": audio_mime},
+#     )
 
-    return ProcessResponse(ok=True, ai_text=ai_text, ai_mime=audio_mime, media_url=url, updated_message_row=updated)
+#     return ProcessResponse(ok=True, ai_text=ai_text, ai_mime=audio_mime, media_url=url, updated_message_row=updated)
