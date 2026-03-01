@@ -166,24 +166,26 @@ def fetch_media(url: str) -> Tuple[bytes, str]:
 # ---------------------------
 # Gemini calls (your LangGraph agent)
 # ---------------------------
-def gemini_analyze_image(image_bytes: bytes, image_mime: str) -> str:
+def gemini_analyze_image(image_bytes: bytes, image_mime: str) -> tuple[str, bytes | None]:
     global messages
     state: MementoState = init_photo_state(image_bytes, image_mime)
     response = run_agent(state)
     messages = response["messages"]
+    mp3 = response["voice"]
     if len(messages) > 0:
-        return messages[0].content
-    return "Error: no response from Gemini"
+        return messages[0].content, mp3
+    return "Error: no response from Gemini", None
 
 
-def gemini_analyze_audio(audio_bytes: bytes, audio_mime: str) -> str:
+def gemini_analyze_audio(audio_bytes: bytes, audio_mime: str) -> tuple[str, bytes | None]:
     global messages, follow_ups
     state: MementoState = init_audio_state(audio_bytes, audio_mime, messages)
     response = run_agent(state)
     messages = response["messages"]
+    mp3 = response["voice"]
     if len(messages) > 0 and isinstance(messages[-1], AIMessage):
-        return messages[-1].content
-    return "Error: no response from Gemini"
+        return messages[-1].content, mp3
+    return "Error: no response from Gemini", None
 
 
 # ---------------------------
@@ -252,6 +254,7 @@ class ProcessResponse(BaseModel):
     ai_text: str
     ai_mime: str
     media_url: str
+    tts_url: str | None = None
     updated_message_row: Any
 
 
@@ -282,7 +285,7 @@ async def upload_recording(
         raise HTTPException(status_code=400, detail="Empty audio upload")
 
     mime = audio.content_type or "application/octet-stream"
-    ai_text = gemini_analyze_audio(audio_bytes, audio_mime=mime)
+    ai_text, ai_audio = gemini_analyze_audio(audio_bytes, audio_mime=mime)
 
     # preserve extension if provided; default to .m4a
     ext = ".m4a"
@@ -290,9 +293,13 @@ async def upload_recording(
         ext = "." + audio.filename.split(".")[-1].lower()
 
     object_path = f"{owner_user_id}/{uuid.uuid4().hex}{ext}"
+    ai_audio_path = f"{convo_id}/ai/{uuid.uuid4().hex}.mp3"
+    ai_mime = "audio/mpeg"
 
     # 1) Upload to Supabase Storage recordings bucket
     storage_upload("recordings", object_path, audio_bytes, mime)
+    if ai_audio:
+        storage_upload("recordings", ai_audio_path, ai_audio, ai_mime)
 
     # 2) Ensure media row exists, attach path
     media_id = ensure_media_for_convo(convo_id)
@@ -318,7 +325,7 @@ async def upload_recording(
         "media_id": media_id,
         "recording_path": object_path,
         "ai_text": ai_text,
-        # If recordings bucket is public, frontend can play this directly:
+        "tts_url": public_object_url("recordings", ai_audio_path) if ai_audio else None,
         "recording_url": public_object_url("recordings", object_path),
         "mime": mime,
         "bytes_len": len(audio_bytes),
@@ -330,7 +337,11 @@ async def upload_recording(
 def process_image(req: ProcessImageRequest):
     url = public_object_url("photos", req.photo_path)
     img_bytes, img_mime = fetch_media(url)
-    ai_text = gemini_analyze_image(img_bytes, img_mime)
+    ai_text, ai_audio = gemini_analyze_image(img_bytes, img_mime)
+    ai_audio_path = f"{req.convo_id}/ai/image.mp3"
+    ai_mime = "audio/mpeg"
+    if ai_audio:
+        storage_upload("recordings", ai_audio_path, ai_audio, ai_mime)
 
     updated = append_ai_turn(
         convo_id=req.convo_id,
@@ -339,7 +350,7 @@ def process_image(req: ProcessImageRequest):
         meta={"photo_url": url, "photo_path": req.photo_path, "mime": img_mime},
     )
 
-    return ProcessResponse(ok=True, ai_text=ai_text, ai_mime=img_mime, media_url=url, updated_message_row=updated)
+    return ProcessResponse(ok=True, ai_text=ai_text, ai_mime=img_mime, media_url=url, updated_message_row=updated, tts_url=public_object_url("recordings", ai_audio_path) if ai_audio else None)
 
 
 # @app.post("/process/audio", response_model=ProcessResponse)
