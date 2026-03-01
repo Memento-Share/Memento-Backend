@@ -12,8 +12,8 @@
 #   pip install fastapi uvicorn requests pydantic
 #   uvicorn backend_api:app --reload --port 8000
 
-import os
-import uuid
+import os, uuid, base64, json
+from fastapi import WebSocket, WebSocketDisconnect
 from typing import Any, Dict, List, Literal, Optional
 from datetime import datetime, timezone
 
@@ -21,8 +21,8 @@ import requests
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
-SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+SUPABASE_URL = "https://dspaaqbthcdwtxfflovn.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRzcGFhcWJ0aGNkd3R4ZmZsb3ZuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjMxODY1NCwiZXhwIjoyMDg3ODk0NjU0fQ.Nq3ICA7nvS1C43q1QKzRlMLmOZ8BtOdtOmk0iPh83XA"
 
 app = FastAPI(title="Memento Backend (store MP3 + append Gemini)")
 
@@ -175,9 +175,6 @@ async def post_recording(
 
     convo = get_convo(convo_id)
 
-    # Optional ownership check
-    if int(convo["owner_user_id"]) != int(owner_user_id):
-        raise HTTPException(status_code=403, detail="owner_user_id does not match convo owner")
 
     audio_bytes = await audio.read()
     if not audio_bytes:
@@ -251,3 +248,97 @@ def post_gemini_response(req: GeminiResponseRequest):
         [ThreadTurn(role="ai", text=req.ai_text, kind=req.kind, meta=req.meta)],
     )
     return {"ok": True, "convo_id": req.convo_id, "updated_message_row": updated}
+
+@app.post("/recordings/test")
+async def test_recording_upload(audio: UploadFile = File(...)):
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio upload")
+
+    mime = audio.content_type or "application/octet-stream"
+    print(f"[TEST] received audio bytes={len(audio_bytes)} mime={mime} filename={audio.filename}")
+
+    return {"ok": True, "bytes_len": len(audio_bytes), "mime": mime, "filename": audio.filename}
+
+
+# ---------------------------
+# Streaming test endpoint (WebSocket)
+# Accepts:
+#   - binary frames (bytes) OR
+#   - text JSON {"type":"chunk","b64":"..."} for base64-encoded PCM
+# Client sends {"type":"stop"} to finalize.
+# ---------------------------
+@app.websocket("/ws/audio")
+async def ws_audio(websocket: WebSocket):
+    """
+    Client sends JSON text frames:
+      {"type":"start","convo_id":12,"owner_user_id":1,"ext":"pcm","mime":"audio/pcm"}
+      {"type":"chunk","b64":"..."}  (base64 raw bytes)
+      {"type":"stop"}
+
+    On stop:
+      - upload combined bytes to Storage bucket recordings
+      - update media.recordings with the object path
+      - reply with {"ok":true,"recording_path":..., "public_url":...}
+    """
+    await websocket.accept()
+    buf = bytearray()
+
+    convo_id = None
+    owner_user_id = None
+    ext = "pcm"
+    mime = "application/octet-stream"
+
+    try:
+      while True:
+        msg = await websocket.receive()
+
+        if "text" in msg and msg["text"]:
+          obj = json.loads(msg["text"])
+
+          if obj.get("type") == "start":
+            convo_id = int(obj["convo_id"])
+            owner_user_id = int(obj["owner_user_id"])
+            ext = obj.get("ext", "pcm")
+            mime = obj.get("mime", "application/octet-stream")
+            await websocket.send_text(json.dumps({"ok": True, "started": True}))
+            continue
+
+          if obj.get("type") == "chunk":
+            b64 = obj.get("b64", "")
+            if b64:
+              buf.extend(base64.b64decode(b64))
+            await websocket.send_text(json.dumps({"ok": True}))
+            continue
+
+          if obj.get("type") == "stop":
+            if convo_id is None or owner_user_id is None:
+              await websocket.send_text(json.dumps({"ok": False, "error": "missing start()"}))
+              break
+
+            # upload to Supabase Storage
+            object_path = f"{owner_user_id}/{uuid.uuid4().hex}.{ext}"
+            storage_upload(bucket="recordings", object_path=object_path, data=bytes(buf), content_type=mime)
+
+            # update DB
+            media_id = ensure_media_for_convo(convo_id)
+            supabase_update("media", f"id=eq.{media_id}", {"recordings": object_path}, select="id,recordings")
+
+            await websocket.send_text(json.dumps({
+              "ok": True,
+              "convo_id": convo_id,
+              "media_id": media_id,
+              "recording_path": object_path,
+              "public_url": storage_public_url("recordings", object_path),
+              "bytes_len": len(buf),
+              "mime": mime
+            }))
+            break
+
+        elif "bytes" in msg and msg["bytes"]:
+          # if you ever send raw binary frames
+          buf.extend(msg["bytes"])
+          await websocket.send_text("ok")
+
+    except WebSocketDisconnect:
+      pass
