@@ -7,6 +7,7 @@ import os
 import base64
 from pathlib import Path
 from google.cloud import texttospeech
+import google
 
 dotenv.load_dotenv()
 
@@ -24,7 +25,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 TEXT_MODEL = "gemini-2.5-flash"
 IMAGE_MODEL = "gemini-2.5-flash"
-TTS_MODEL = "gemini-2.5-tts"
+TTS_MODEL = "gemini-2.5-flash-lite-preview-tts"
 
 gemini = ChatGoogleGenerativeAI(model=TEXT_MODEL, api_key=GEMINI_API_KEY)
 
@@ -68,8 +69,12 @@ def tts_node(state: MementoState) -> MementoState:
     )
     prompt = "You are a warm, patient interviewer helping an elderly person tell stories. Speak in a friendly, conversational tone."
     ai_response = state["messages"][-1].content
-    synthesis_input = texttospeech.SynthesisInput(text=ai_response, prompt=prompt)
-    response = client.synthesize_speech(input=synthesis_input, audio_config=audio_config)
+    synthesis_input = texttospeech.SynthesisInput(text=ai_response)
+    response = client.synthesize_speech(input=synthesis_input, audio_config=audio_config, voice=texttospeech.VoiceSelectionParams(language_code="en-US", model_name = TTS_MODEL, name = "Achernar"))
+    output_filepath = Path("test_media/response.mp3")
+    with open(output_filepath, "wb") as out:
+        out.write(response.audio_content)
+        print(f"Audio content written to file: {output_filepath}")
     return MementoState(messages=state["messages"], request_stage=state["request_stage"], voice=response.audio_content)
 
 
